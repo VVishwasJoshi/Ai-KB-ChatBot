@@ -1,9 +1,15 @@
+
+
+
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import './index.css'
 
+// Get API URL from environment variable, fallback to localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 function App() {
-  const [activeTab, setActiveTab] = useState('chat'); 
+  const [activeTab, setActiveTab] = useState('chat');
   const [messages, setMessages] = useState([
     { role: 'bot', content: 'Hi there! I can help you find info in your knowledge base. What would you like to know?' }
   ]);
@@ -29,7 +35,7 @@ function App() {
   const fetchKnowledgeBases = useCallback(async () => {
     setKbLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/knowledgebase');
+      const response = await fetch(`${API_BASE_URL}/api/knowledgebase`);
       if (!response.ok) throw new Error('Failed to fetch KBs');
       const data = await response.json();
       setKnowledgeBases(data.knowledgeBases || data || []);
@@ -64,12 +70,12 @@ function App() {
         formData.append('description', uploadDescription);
       }
 
-    
+
       Array.from(selectedFiles).forEach(file => {
         formData.append('files', file);
       });
 
-      const response = await fetch('http://localhost:5000/api/knowledgebase', {
+      const response = await fetch(`${API_BASE_URL}/api/knowledgebase`, {
         method: 'POST',
         body: formData
       });
@@ -108,8 +114,8 @@ function App() {
     setIsLoading(true);
 
     try {
-     
-      const response = await fetch('http://localhost:5000/api/chat', {
+
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: currentQuery }),
@@ -121,7 +127,7 @@ function App() {
 
       const data = await response.json();
 
-    
+
       let botResponseText = "I couldn't find anything on that topic.";
 
       if (data.answer) {
