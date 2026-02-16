@@ -1,17 +1,23 @@
+
+
+
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
-const serverless = require('serverless-http');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-
+// Allow all CORS - simple solution
 app.use(cors());
 app.use(express.json());
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 const CONTEXT_API_BASE_URL = 'https://backend.vgvishesh.com';
 
@@ -19,7 +25,7 @@ const CONTEXT_API_BASE_URL = 'https://backend.vgvishesh.com';
 
 const multer = require('multer');
 const FormData = require('form-data');
-const upload = multer({ storage: multer.memoryStorage() }); 
+const upload = multer({ storage: multer.memoryStorage() });
 
 
 app.get('/api/knowledgebase', async (req, res) => {
@@ -29,7 +35,7 @@ app.get('/api/knowledgebase', async (req, res) => {
             headers: {
                 'x-api-key': apiKey
             },
-            timeout:8000
+            timeout: 10000 // 10 seconds
         });
         res.json(response.data);
     } catch (error) {
@@ -42,17 +48,17 @@ app.get('/api/knowledgebase', async (req, res) => {
 app.post('/api/knowledgebase', upload.array('files'), async (req, res) => {
     try {
         const apiKey = process.env.API_KEY;
-        
-        
+
+
         const form = new FormData();
-        
-       
+
+
         form.append('name', req.body.name || "New Knowledge Base");
         if (req.body.description) {
             form.append('description', req.body.description);
         }
-        
-  
+
+
         if (req.files && req.files.length > 0) {
             req.files.forEach(file => {
                 form.append('files', file.buffer, {
@@ -61,15 +67,15 @@ app.post('/api/knowledgebase', upload.array('files'), async (req, res) => {
                 });
             });
         }
-        
-       
+
+
         const response = await axios.post(`${CONTEXT_API_BASE_URL}/knowledgebase`, form, {
             headers: {
                 ...form.getHeaders(),
                 'x-api-key': apiKey
             }
         });
-        
+
         res.json(response.data);
     } catch (error) {
         console.error("Error creating KB:", error.message);
@@ -85,13 +91,13 @@ app.get('/api/knowledgebase/:requestId', async (req, res) => {
     try {
         const apiKey = process.env.API_KEY;
         const { requestId } = req.params;
-        
+
         const response = await axios.get(`${CONTEXT_API_BASE_URL}/knowledgebase/${requestId}`, {
             headers: {
                 'x-api-key': apiKey
             }
         });
-        
+
         res.json(response.data);
     } catch (error) {
         console.error("Error checking status:", error.message);
@@ -101,7 +107,7 @@ app.get('/api/knowledgebase/:requestId', async (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
     try {
-        
+
 
         const { query } = req.body;
         console.log("User Query:", query);
@@ -115,7 +121,7 @@ app.post('/api/chat', async (req, res) => {
             return res.status(500).json({ error: 'Server misconfiguration.' });
         }
 
-       
+
         const response = await axios.post(
             `${CONTEXT_API_BASE_URL}/knowledgebase/${knowledgeBaseId}/embeddings`,
             {
@@ -127,12 +133,13 @@ app.post('/api/chat', async (req, res) => {
                 headers: {
                     'x-api-key': apiKey,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 15000 // 15 seconds timeout
             }
         );
 
         const results = response.data.embeddings || [];
-       
+
 
         if (!results.length) {
             return res.json({ answer: "No relevant information found." });
@@ -143,7 +150,7 @@ app.post('/api/chat', async (req, res) => {
             return item.content.trim();
         }).join("\n\n");
 
-        
+
         const genAI = new GoogleGenerativeAI(geminiApiKey);
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -157,26 +164,52 @@ Question:
 ${query}
         `;
 
-       
-        const result = await model.generateContent(prompt);
+        // Add timeout for Gemini API call (20 seconds)
+        const generateContentPromise = model.generateContent(prompt);
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Gemini API timeout after 20 seconds')), 20000)
+        );
+        
+        const result = await Promise.race([generateContentPromise, timeoutPromise]);
         const answer = result.response.text();
 
-        
+
 
         return res.json({ answer });
 
     } catch (error) {
+        console.error("Chat error:", error.message);
         
-        console.error(error);
-        return res.status(500).json({ error: "Internal server error" });
+        // Return more specific error messages
+        if (error.message.includes('timeout')) {
+            return res.status(504).json({ error: "Request timeout. Please try again." });
+        }
+        if (error.message.includes('Missing API Keys')) {
+            return res.status(500).json({ error: "Server configuration error." });
+        }
+        
+        return res.status(500).json({ error: error.message || "Internal server error" });
     }
 });
 
 
 // Start the server
-// app.listen(PORT, () => {
-//     
-//     console.log(`Running on: http://localhost:${PORT}`);
-// });
+const server = app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+});
 
-module.exports = serverless(app);
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+    });
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
+});
